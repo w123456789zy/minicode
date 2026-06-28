@@ -1,0 +1,63 @@
+# ─────────────────────────────────────
+# Python 缓存 / 构建产物
+# ─────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+build/
+dist/
+.eggs/
+.installed.cfg
+*.egg
+
+# ─────────────────────────────────────
+# 虚拟环境
+# ─────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+
+# ─────────────────────────────────────
+# 测试 / lint 缓存
+# ─────────────────────────────────────
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# ─────────────────────────────────────
+# IDE / 编辑器
+# ─────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# ─────────────────────────────────────
+# minicode 用户级运行时产物（不应提交）
+# ─────────────────────────────────────
+.minicode/history/
+.minicode/logs/
+.minicode/cache/
+.minicode/.cache/
+
+# ─────────────────────────────────────
+# 用户敏感配置（API key 等，不应提交）
+# ─────────────────────────────────────
+.minicode/config.yaml
+.minicode/mcp.json
+.env
+.env.local
+
+# 注意：以下内容**保留**并提交（项目级示例 / 团队配置）
+#   .minicode/AGENTS.md
+#   .minicode/skills/*/SKILL.md
+#   .minicode/agents/*.md
+#   .minicode/commands/*.md
+#   .minicode/hooks/*.py  /  *.sh
+#   .minicode/rules/*.md
