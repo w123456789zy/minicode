@@ -21,8 +21,22 @@ class BashParams(BaseModel):
     timeout: Optional[int] = Field(None, description="超时毫秒，默认 120000")
 
 
-# 简单危险命令嗅探（生产环境应配权限系统）
-_DANGEROUS = re.compile(r"\b(rm\s+-rf\s+/|mkfs|format\s+|dd\s+if=.*of=/dev)\b", re.I)
+# 危险命令检测（生产环境应配权限系统）
+# 覆盖：rm -rf /, rm -r -f /, rm -rf /*, mkfs, dd, format, curl|sh, wget|sh, chmod 777 /, > /dev/
+_DANGEROUS = re.compile(
+    r"\b(rm\s+-[r-]*f\s+/(\*|\S*$)?|"          # rm -rf / 或 rm -r -f / 或 rm -rf /*
+    r"mkfs\.?\w*\s|"                             # mkfs / mkfs.ext4 等
+    r"format\s+[a-zA-Z]:|"                       # format C: 等
+    r"dd\s+if=.*\s+of=/dev/|"                    # dd if=... of=/dev/...
+    r">\s*/dev/sd[a-z]|"                         # > /dev/sda 等
+    r"chmod\s+-R\s+777\s+/|"                     # chmod -R 777 /
+    r"curl\s+\S+\s*\|\s*(ba)?sh|"                # curl ... | sh / curl ... | bash
+    r"wget\s+\S+\s*-O\s*-\s*\|\s*(ba)?sh|"      # wget ... -O - | sh
+    r"git\s+push\s+--force\s+origin\s+main|"     # git push --force origin main
+    r"git\s+push\s+-f\s+origin\s+main|"           # git push -f origin main
+    r">\s*/etc/(passwd|shadow|sudoers|hosts))",   # 覆盖系统关键文件
+    re.I,
+)
 
 
 class BashTool(Tool):

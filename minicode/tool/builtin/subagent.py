@@ -12,13 +12,14 @@ delegate_to_subagent 工具：让 LLM 把任务委派给一个 subagent。
 防止 sub-subagent → sub-sub-subagent 的无限嵌套。
 
 依赖注入：
-- SubagentLoader (via set_loader)
-- SubagentRunner (via set_runner) — CLI 在 build 完所有 registry 后注入
+- SubagentLoader (via set_loader) — 由 ToolRegistry.build() 注入
+- model + tool_registry (via set_model / set_tool_registry) — 由 CLI 注入
 """
 
 from __future__ import annotations
 
-from typing import Any, Awaitable, Callable, List, TYPE_CHECKING
+import json
+from typing import Any, List, Optional, TYPE_CHECKING
 
 from pydantic import BaseModel, Field
 
@@ -26,7 +27,7 @@ from minicode.tool.base import Tool, ToolContext, ToolResult, ToolKind
 
 if TYPE_CHECKING:
     from minicode.agent.loader import SubagentLoader
-    SubagentRunner = Callable[..., Awaitable[Any]]
+    from minicode.model.base import Model
 
 
 class SubagentParams(BaseModel):
@@ -41,13 +42,19 @@ class SubagentTool(Tool):
 
     def __init__(self):
         self._loader: "SubagentLoader | None" = None
-        self._runner: "SubagentRunner | None" = None
+        self._model: "Model | None" = None
+        self._tool_registry: Any = None  # ToolRegistry（避免循环导入）
 
     def set_loader(self, loader: "SubagentLoader") -> None:
         self._loader = loader
 
-    def set_runner(self, runner: "SubagentRunner") -> None:
-        self._runner = runner
+    def set_model(self, model: "Model") -> None:
+        """注入 LLM model（CLI 启动时调用）。"""
+        self._model = model
+
+    def set_tool_registry(self, tool_registry) -> None:
+        """注入 ToolRegistry（CLI 启动时调用），用于 subagent 的工具执行。"""
+        self._tool_registry = tool_registry
 
     @property
     def id(self) -> str:
@@ -73,10 +80,16 @@ class SubagentTool(Tool):
                 output="SubagentLoader is not attached. This is a registry wiring bug.",
                 metadata={"error": True},
             )
-        if self._runner is None:
+        if self._model is None:
             return ToolResult(
-                title="subagent runner not configured",
-                output="SubagentRunner is not attached. CLI must wire this after ModelRegistry is built.",
+                title="subagent model not configured",
+                output="No LLM model available for subagent. Please configure a model in .minicode/config.yaml.",
+                metadata={"error": True},
+            )
+        if self._tool_registry is None:
+            return ToolResult(
+                title="subagent tool_registry not configured",
+                output="ToolRegistry is not attached to SubagentTool. This is a CLI wiring bug.",
                 metadata={"error": True},
             )
 
@@ -89,12 +102,34 @@ class SubagentTool(Tool):
                 metadata={"error": True, "available": available},
             )
 
-        # 调注入的 runner（CLI 构造）
-        result = await self._runner(
-            subagent_name=info.name,
+        from minicode.agent.runtime import run_subagent
+        from minicode.model.message import ToolSchema
+
+        def _to_schema(defn) -> ToolSchema:
+            return ToolSchema(
+                name=defn.id,
+                description=defn.description,
+                parameters=defn.json_schema(),
+            )
+
+        # 构建 subagent 的 tool 列表（排除自身，防递归）
+        schemas = [
+            _to_schema(d)
+            for d in self._tool_registry.all()
+            if d.id != "delegate_to_subagent"
+        ]
+
+        sub_ctx = ctx.sub()
+
+        result = await run_subagent(
+            model=self._model,
             subagent_system_prompt=info.system_prompt,
             task=args.task,
-            parent_ctx=ctx,
+            tool_registry=self._tool_registry,
+            ctx=sub_ctx,
+            tool_schemas=schemas,
+            max_iterations=10,
+            context_limit=8000,
         )
 
         # 渲染输出

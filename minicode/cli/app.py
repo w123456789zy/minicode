@@ -563,11 +563,13 @@ async def _repl(paths: MinicodePaths, resume: Optional[str] = None) -> None:
     if custom_cmds:
         print(f"[commands] {len(custom_cmds)} custom commands loaded")
 
-    # 注入 subagent runner：把 model + tool_registry 注入到 SubagentTool
+    # 注入 subagent 依赖：把 model + tool_registry 注入到 SubagentTool
     # 防递归：subagent 看到的 tool 列表要排除 delegate_to_subagent 自身
     subagent_tool = reg.get("delegate_to_subagent")
-    if subagent_tool is not None and isinstance(subagent_tool.tool, SubagentTool) and m is not None:
-        subagent_tool.tool.set_runner(_make_subagent_runner(reg, m))
+    if subagent_tool is not None and isinstance(subagent_tool.tool, SubagentTool):
+        subagent_tool.tool.set_tool_registry(reg)
+        if m is not None:
+            subagent_tool.tool.set_model(m)
 
     # 运行时状态
     history: List[Message] = []
@@ -1598,7 +1600,7 @@ def _cmd_display(
 
 
 # ─────────────────────────────────────────────────────────────
-# Subagent runner 工厂
+# Main agent：CLI 主回路用
 # ─────────────────────────────────────────────────────────────
 
 
@@ -1609,71 +1611,6 @@ def _to_schema(defn) -> ToolSchema:
         description=defn.description,
         parameters=defn.json_schema(),
     )
-
-
-def _make_subagent_runner(reg: ToolRegistry, model):
-    """构造 subagent runner 闭包（注入给 SubagentTool）。
-
-    Runner 职责：
-    - 把 ToolRegistry 的工具转成 LLM 视角的 ToolSchema
-    - 排除 delegate_to_subagent 自身（防递归）
-    - 调 run_subagent() 做嵌套 ReAct
-    - 返回 SubagentResult
-    """
-    from minicode.tool.base import ToolContext
-
-    def _build_schemas() -> List[ToolSchema]:
-        return [
-            _to_schema(d)
-            for d in reg.all()
-            if d.id != "delegate_to_subagent"  # 防递归
-        ]
-
-    async def runner(
-        subagent_name: str,
-        subagent_system_prompt: str,
-        task: str,
-        parent_ctx: ToolContext,
-    ):
-        schemas = _build_schemas()
-        # 用父 ctx 派生出 subagent 的 ctx（同一 cwd；可以以后扩 extra 隔离）
-        sub_ctx = parent_ctx.sub()
-        sys.stdout.write(f"\n[subagent:{subagent_name}] task received ({len(task)} chars, {len(schemas)} tools available)\n")
-        sys.stdout.flush()
-
-        def _on_progress(iter_idx, msg, post_tool=False):
-            if post_tool:
-                sys.stdout.write(f"  ↳ iter {iter_idx} done\n")
-            elif msg is not None:
-                tcs = msg.tool_calls()
-                if tcs:
-                    for tc in tcs:
-                        sys.stdout.write(f"  ↳ [{subagent_name}] call {tc.name}({json.dumps(tc.arguments, ensure_ascii=False)[:80]})\n")
-            sys.stdout.flush()
-
-        result = await run_subagent(
-            model=model,
-            subagent_system_prompt=subagent_system_prompt,
-            task=task,
-            tool_registry=reg,
-            ctx=sub_ctx,
-            tool_schemas=schemas,
-            max_iterations=10,
-            on_progress=_on_progress,
-            context_limit=0,  # 0 = 用默认 8000；subagent 不需要大窗口
-        )
-        sys.stdout.write(f"[subagent:{subagent_name}] done in {result.iterations} iter, {len(result.tool_calls_made)} tool calls\n")
-        if result.error:
-            sys.stdout.write(f"[subagent:{subagent_name}] warn: {result.error}\n")
-        sys.stdout.flush()
-        return result
-
-    return runner
-
-
-# ─────────────────────────────────────────────────────────────
-# Main agent：CLI 主回路用
-# ─────────────────────────────────────────────────────────────
 
 
 def _build_main_tool_schemas(reg: ToolRegistry) -> List[ToolSchema]:

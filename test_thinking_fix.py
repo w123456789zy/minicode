@@ -1,7 +1,9 @@
-"""端到端验证 thinking 合并修复。
+"""端到端验证 thinking 合并修复 + 显示顺序。
 
-模拟 DeepSeek/R1 风格：16 个 thinking_delta + 16 个 text_delta + finish
-验证 CLI 只输出 1 个 thinking block。
+模拟真实 DeepSeek 流式：先全部 thinking_delta，再全部 text_delta + finish
+验证：
+1. 只有 1 个 thinking_done 事件
+2. thinking_done 在第一个 text_delta 之前 emit（显示在上方）
 """
 import asyncio, sys
 from contextlib import redirect_stdout
@@ -14,7 +16,7 @@ from minicode.tool.base import ToolContext
 
 
 class _MockThinkingModel(Model):
-    """模拟 DeepSeek：reasoning_content + content 交替的 stream。"""
+    """模拟真实 DeepSeek：reasoning_content 全部先出，再出 content。"""
     def __init__(self):
         self._info = ModelInfo(
             id="mock",
@@ -28,16 +30,9 @@ class _MockThinkingModel(Model):
     async def stream(self, messages, tools=None, system=None):
         thinking = "用户打了招呼，我简单回应一下，保持直接简洁的风格。"
         text = "你好！有什么想做的？"
-        # 模拟 DeepSeek：thinking 和 text 交替输出，但 thinking 可能更长
-        # 先按短的交替，剩余的 thinking 单独输出
-        shorter = min(len(thinking), len(text))
-        for i in range(shorter):
-            yield ModelEvent(type="thinking_delta", text=thinking[i])
-            yield ModelEvent(type="text_delta", text="")
-        # 剩余的 thinking token（如果 thinking 比 text 长）
-        for i in range(shorter, len(thinking)):
-            yield ModelEvent(type="thinking_delta", text=thinking[i])
-        # 正式的 text 输出
+        # 真实 DeepSeek 流式：先全部 thinking_delta，再全部 text_delta
+        for c in thinking:
+            yield ModelEvent(type="thinking_delta", text=c)
         for c in text:
             yield ModelEvent(type="text_delta", text=c)
         yield ModelEvent(type="finish", finish_reason="stop")
@@ -80,13 +75,23 @@ async def main():
 
     await run_agent(model, "sys", history, reg, ctx, [], on_event=cb)
 
+    # 1. 验证只有一个 thinking_done
     done_events = [e for e in events if e.type == "thinking_done"]
     print(f"thinking_done events: {len(done_events)}")
-    if done_events:
-        print(f"content: {done_events[0].text}")
     assert len(done_events) == 1, f"Expected 1 thinking_done, got {len(done_events)}"
     assert "用户" in done_events[0].text and "风格" in done_events[0].text
-    print("PASS: thinking is merged into 1 block")
+    print(f"content: {done_events[0].text}")
+
+    # 2. 验证 thinking_done 在第一个 text_delta 之前（显示顺序）
+    event_types = [e.type for e in events]
+    td_idx = event_types.index("thinking_done")
+    first_text_idx = event_types.index("text_delta")
+    assert td_idx < first_text_idx, (
+        f"thinking_done (idx={td_idx}) must appear before first text_delta (idx={first_text_idx})"
+    )
+    print(f"thinking_done at index {td_idx}, first text_delta at index {first_text_idx}")
+
+    print("PASS: thinking is merged into 1 block and appears before text")
 
 
 asyncio.run(main())

@@ -103,8 +103,6 @@ class SkillLoader:
                 if info is None:
                     continue
                 # 后扫描到的同名 skill 覆盖前面的（项目级 > 全局级）
-                if info.name in self._skills:
-                    continue
                 self._skills[info.name] = info
 
     def get(self, name: str) -> Optional[SkillInfo]:

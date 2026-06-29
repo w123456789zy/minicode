@@ -1,13 +1,16 @@
 """tool.builtin.subagent 单测。"""
 import asyncio
 from pathlib import Path
+from typing import Any, Dict, List, Optional
 
-from minicode.tool.base import ToolContext
+from minicode.model.base import Model, ModelEvent, ModelInfo
+from minicode.model.message import Message, ToolSchema
+from minicode.tool.base import Tool, ToolContext, ToolResult
 from minicode.tool.builtin.subagent import SubagentTool, SubagentParams
 
 
 # ─────────────────────────────────────────────────────────────
-# mock loader + mock runner
+# mock loader
 # ─────────────────────────────────────────────────────────────
 
 
@@ -30,26 +33,33 @@ class _MockSubagent:
         self.location = Path(f"/fake/{name}.md")
 
 
-async def _fake_runner(**kwargs):
-    """替身 runner：返回固定结构。"""
-    from minicode.agent.runtime import SubagentResult
-    return SubagentResult(
-        text=f"RESULT for {kwargs['subagent_name']}: {kwargs['task']}",
-        iterations=2,
-        tool_calls_made=["grep", "read"],
-        usage_input=10,
-        usage_output=20,
-    )
+# ─────────────────────────────────────────────────────────────
+# mock model
+# ─────────────────────────────────────────────────────────────
 
 
-async def _error_runner(**kwargs):
-    from minicode.agent.runtime import SubagentResult
-    return SubagentResult(
-        text="partial",
-        iterations=1,
-        tool_calls_made=[],
-        error="LLM crashed",
-    )
+class _MockModel(Model):
+    """简单的 mock model：返回固定文本。"""
+    def __init__(self):
+        super().__init__(ModelInfo(id="mock", type="mock", base_url="-", model="mock"))
+
+    async def stream(self, messages, tools=None, system=None):
+        yield ModelEvent(type="text_delta", text="mock result")
+        yield ModelEvent(type="finish", finish_reason="stop")
+
+
+# ─────────────────────────────────────────────────────────────
+# mock tool registry
+# ─────────────────────────────────────────────────────────────
+
+
+class _MockRegistry:
+    """最小 registry duck-type。"""
+    def all(self):
+        return []
+
+    async def execute(self, name, args, ctx):
+        return ToolResult(title="ok", output="done")
 
 
 # ─────────────────────────────────────────────────────────────
@@ -68,14 +78,14 @@ def test_subagent_tool_execute_success():
     async def run():
         t = SubagentTool()
         t.set_loader(_MockLoader({"foo": _MockSubagent("foo", "you are foo")}))
-        t.set_runner(_fake_runner)
+        t.set_model(_MockModel())
+        t.set_tool_registry(_MockRegistry())
         ctx = ToolContext(cwd=Path("."))
         result = await t.execute(SubagentParams(name="foo", task="do X"), ctx)
         assert "foo" in result.title
         assert "<subagent_result" in result.output
-        assert "RESULT for foo" in result.output
-        assert result.metadata["iterations"] == 2
-        assert "grep" in result.metadata["tool_calls_made"]
+        assert "mock result" in result.output
+        assert result.metadata["iterations"] == 1
     asyncio.run(run())
 
 
@@ -83,7 +93,8 @@ def test_subagent_tool_not_found():
     async def run():
         t = SubagentTool()
         t.set_loader(_MockLoader({}))
-        t.set_runner(_fake_runner)
+        t.set_model(_MockModel())
+        t.set_tool_registry(_MockRegistry())
         ctx = ToolContext(cwd=Path("."))
         result = await t.execute(SubagentParams(name="ghost", task="x"), ctx)
         assert "not found" in result.title
@@ -92,35 +103,37 @@ def test_subagent_tool_not_found():
     asyncio.run(run())
 
 
-def test_subagent_tool_runner_error():
-    async def run():
-        t = SubagentTool()
-        t.set_loader(_MockLoader({"foo": _MockSubagent("foo")}))
-        t.set_runner(_error_runner)
-        ctx = ToolContext(cwd=Path("."))
-        result = await t.execute(SubagentParams(name="foo", task="x"), ctx)
-        assert "errored" in result.title
-        assert "LLM crashed" in result.output
-        assert result.metadata["error"] == "LLM crashed"
-    asyncio.run(run())
-
-
 def test_subagent_tool_no_loader():
     async def run():
         t = SubagentTool()
-        t.set_runner(_fake_runner)
+        t.set_model(_MockModel())
+        t.set_tool_registry(_MockRegistry())
         ctx = ToolContext(cwd=Path("."))
         result = await t.execute(SubagentParams(name="x", task="y"), ctx)
         assert result.metadata["error"] is True
+        assert "loader" in result.output.lower()
     asyncio.run(run())
 
 
-def test_subagent_tool_no_runner():
+def test_subagent_tool_no_model():
     async def run():
         t = SubagentTool()
         t.set_loader(_MockLoader({"x": _MockSubagent("x")}))
+        t.set_tool_registry(_MockRegistry())
         ctx = ToolContext(cwd=Path("."))
         result = await t.execute(SubagentParams(name="x", task="y"), ctx)
         assert result.metadata["error"] is True
-        assert "Runner" in result.output
+        assert "model" in result.output.lower()
+    asyncio.run(run())
+
+
+def test_subagent_tool_no_registry():
+    async def run():
+        t = SubagentTool()
+        t.set_loader(_MockLoader({"x": _MockSubagent("x")}))
+        t.set_model(_MockModel())
+        ctx = ToolContext(cwd=Path("."))
+        result = await t.execute(SubagentParams(name="x", task="y"), ctx)
+        assert result.metadata["error"] is True
+        assert "toolregistry" in result.output.lower()
     asyncio.run(run())

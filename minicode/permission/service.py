@@ -8,6 +8,7 @@ PermissionService：per-session 的 always 状态 + 询问逻辑。
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import logging
 import sys
@@ -24,8 +25,8 @@ from minicode.permission.types import (
 _log = logging.getLogger("minicode.permission")
 
 
-def default_prompt(req: PermissionRequest) -> PermissionResult:
-    """默认阻塞 prompt：打印工具调用，3 选项让用户选。
+async def default_prompt(req: PermissionRequest) -> PermissionResult:
+    """默认 prompt：打印工具调用，3 选项让用户选（async，不阻塞事件循环）。
 
     提示格式：
       [permission] tool 'bash' wants to run
@@ -51,7 +52,7 @@ def default_prompt(req: PermissionRequest) -> PermissionResult:
     sys.stdout.write("> ")
     sys.stdout.flush()
     try:
-        line = input().strip().lower()
+        line = (await asyncio.to_thread(sys.stdin.readline)).strip().lower()
     except (EOFError, KeyboardInterrupt):
         return PermissionResult.deny("(interrupted)")
 
@@ -64,7 +65,7 @@ def default_prompt(req: PermissionRequest) -> PermissionResult:
         sys.stdout.write("reason (optional): ")
         sys.stdout.flush()
         try:
-            reason = input().strip() or None
+            reason = (await asyncio.to_thread(sys.stdin.readline)).strip() or None
         except (EOFError, KeyboardInterrupt):
             reason = None
         return PermissionResult.deny(reason)

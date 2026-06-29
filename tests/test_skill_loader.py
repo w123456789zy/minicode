@@ -57,7 +57,7 @@ def test_loader_missing_dir_ignored(tmp_path: Path):
 
 
 def test_loader_dedup_name(tmp_path: Path):
-    """同名 skill：后扫描的不覆盖先扫描的（实现：if exists, continue）。"""
+    """同名 skill：后扫描的覆盖先扫描的（项目级 > 全局级）。"""
     _write_skill(tmp_path, "foo", "first")
     other = tmp_path / "other"
     other.mkdir()
@@ -69,4 +69,4 @@ def test_loader_dedup_name(tmp_path: Path):
     loader = SkillLoader([tmp_path, other])
     loader.scan()
     assert len(loader.all()) == 1
-    assert loader.get("foo").description == "first"
+    assert loader.get("foo").description == "second"

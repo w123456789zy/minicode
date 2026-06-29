@@ -18,6 +18,7 @@ Subagent + Main agent 运行时：ReAct 循环。
 from __future__ import annotations
 
 import json
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
@@ -93,7 +94,7 @@ def _tool_call_signature(name: str, args: Dict[str, Any]) -> str:
         return f"{name}:{str(args)}"
 
 
-def _check_doom_loop(recent_signatures: List[str], tc_name: str, tc_args: Dict[str, Any]) -> Optional[str]:
+def _check_doom_loop(recent_signatures: deque, tc_name: str, tc_args: Dict[str, Any]) -> Optional[str]:
     """检测 doom loop：追加签名并检查最近 N 次是否全是同一签名。
 
     返回触发 doom loop 的 tool name，未触发返回 None。
@@ -101,7 +102,7 @@ def _check_doom_loop(recent_signatures: List[str], tc_name: str, tc_args: Dict[s
     sig = _tool_call_signature(tc_name, tc_args)
     recent_signatures.append(sig)
     if len(recent_signatures) >= _DOOM_LOOP_THRESHOLD:
-        last_n = recent_signatures[-_DOOM_LOOP_THRESHOLD:]
+        last_n = list(recent_signatures)[-_DOOM_LOOP_THRESHOLD:]
         if len(set(last_n)) == 1:
             return tc_name
     return None
@@ -190,7 +191,7 @@ async def run_subagent(
     )
 
     # doom loop 检测
-    recent_signatures: List[str] = []
+    recent_signatures: deque = deque(maxlen=_DOOM_LOOP_THRESHOLD * 2)
 
     iterations_done = 0
     for it in range(max_iterations):
@@ -440,7 +441,7 @@ async def run_agent(
     iterations_done = 0
 
     # doom loop 检测
-    recent_signatures: List[str] = []
+    recent_signatures: deque = deque(maxlen=_DOOM_LOOP_THRESHOLD * 2)
 
     for it in range(max_iterations):
         iterations_done = it + 1
@@ -449,6 +450,7 @@ async def run_agent(
         # 一次流式调用
         text_parts: List[str] = []
         thinking_parts: List[str] = []
+        thinking_emitted = False  # 防止重复 emit thinking_done
         tool_calls: Dict[str, "_PartialTC"] = {}
         usage: Optional[ModelUsage] = None
         finish = "stop"
@@ -459,12 +461,15 @@ async def run_agent(
                 history, tools=tool_schemas or None, system=system_prompt,
             ):
                 if ev.type == "text_delta":
+                    # 第一个 text token 到达前，如果已有 thinking 积累，先 flush
+                    if thinking_parts and not thinking_emitted:
+                        await _emit(on_event, AgentEvent(type="thinking_done", text="".join(thinking_parts)))
+                        thinking_emitted = True
                     text_parts.append(ev.text)
                     await _emit(on_event, AgentEvent(type="text_delta", text=ev.text))
                 elif ev.type == "thinking_delta":
                     thinking_parts.append(ev.text)
-                    # 不 emit 离散的 thinking_delta；stream 结束后统一 emit thinking_done
-                    # 这样 CLI 侧就不可能把 thinking 拆成多个 block
+                    # 不 emit 离散的 thinking_delta；等第一个 text_delta 或 stream 结束时统一 emit
                 elif ev.type == "tool_call_delta":
                     if not ev.tool_call_id:
                         if tool_calls:
@@ -523,7 +528,8 @@ async def run_agent(
             budget = budget.with_added_tokens(estimate_message_tokens(assistant_msg))
 
         # 本轮所有 thinking 合并为 1 个事件（保证 CLI 只渲染 1 个 block）
-        if thinking_parts:
+        # 如果还没 emit（没有 text_delta 触发），在这里补 emit
+        if thinking_parts and not thinking_emitted:
             await _emit(on_event, AgentEvent(type="thinking_done", text="".join(thinking_parts)))
 
         await _emit(on_event, AgentEvent(type="finish", finish_reason=finish, usage=usage))

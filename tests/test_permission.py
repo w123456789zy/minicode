@@ -238,49 +238,49 @@ class TestPermissionServiceRequestValidation:
         asyncio.run(go())
 
 
-# ── default_prompt 行为（用 monkeypatch 模拟 input） ─────────────────────────
+# ── default_prompt 行为（async，用 monkeypatch 模拟 sys.stdin.readline） ──────
 
 
 class TestDefaultPrompt:
-    def test_yes_default(self, monkeypatch, capsys):
+    async def test_yes_default(self, monkeypatch, capsys):
         # 模拟用户输入空（默认 = 1）
-        monkeypatch.setattr("builtins.input", lambda prompt="": "")
+        monkeypatch.setattr("sys.stdin.readline", lambda: "")
         from minicode.permission.service import default_prompt
-        r = default_prompt(PermissionRequest(tool_id="bash", args={"command": "ls"}))
+        r = await default_prompt(PermissionRequest(tool_id="bash", args={"command": "ls"}))
         assert r.action == PermissionAction.ALLOW
         out = capsys.readouterr().out
         assert "[permission]" in out
         assert "bash" in out
         assert "Yes" in out
 
-    def test_yes_always(self, monkeypatch):
-        monkeypatch.setattr("builtins.input", lambda prompt="": "2")
+    async def test_yes_always(self, monkeypatch):
+        monkeypatch.setattr("sys.stdin.readline", lambda: "2")
         from minicode.permission.service import default_prompt
-        r = default_prompt(PermissionRequest(tool_id="bash"))
+        r = await default_prompt(PermissionRequest(tool_id="bash"))
         assert r.action == PermissionAction.ALLOW_ALWAYS
 
-    def test_no_with_reason(self, monkeypatch):
-        # 第一次 input → "3"（选 no），第二次 input → "because"
+    async def test_no_with_reason(self, monkeypatch):
+        # 第一次 stdin.readline → "3"（选 no），第二次 → "because"
         responses = iter(["3", "because"])
-        monkeypatch.setattr("builtins.input", lambda prompt="": next(responses))
+        monkeypatch.setattr("sys.stdin.readline", lambda: next(responses))
         from minicode.permission.service import default_prompt
-        r = default_prompt(PermissionRequest(tool_id="bash"))
+        r = await default_prompt(PermissionRequest(tool_id="bash"))
         assert r.action == PermissionAction.DENY
         assert r.reason == "because"
 
-    def test_eof_denies(self, monkeypatch):
-        def boom(prompt=""):
+    async def test_eof_denies(self, monkeypatch):
+        def boom():
             raise EOFError
-        monkeypatch.setattr("builtins.input", boom)
+        monkeypatch.setattr("sys.stdin.readline", boom)
         from minicode.permission.service import default_prompt
-        r = default_prompt(PermissionRequest(tool_id="bash"))
+        r = await default_prompt(PermissionRequest(tool_id="bash"))
         assert r.action == PermissionAction.DENY
         assert "interrupted" in (r.reason or "")
 
-    def test_unrecognized_denies(self, monkeypatch):
-        monkeypatch.setattr("builtins.input", lambda prompt="": "???")
+    async def test_unrecognized_denies(self, monkeypatch):
+        monkeypatch.setattr("sys.stdin.readline", lambda: "???")
         from minicode.permission.service import default_prompt
-        r = default_prompt(PermissionRequest(tool_id="bash"))
+        r = await default_prompt(PermissionRequest(tool_id="bash"))
         assert r.action == PermissionAction.DENY
         assert "unrecognized" in (r.reason or "")
 
