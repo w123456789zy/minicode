@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pyminicode"
-version = "0.4.0"
+version = "0.6.0"
 description = "Terminal-native AI coding assistant (Python) with ReAct loop, memory system, and extensible tool/skill/hook architecture"
 readme = "README.md"
 requires-python = ">=3.10"

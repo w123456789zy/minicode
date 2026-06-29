@@ -1650,6 +1650,7 @@ async def _stream_agent_run(
         ThinkingBlock,
         ToolCallView,
         ToolResultView,
+        build_model_input_messages,
         render_code_change_header,
         render_model_input,
         render_thinking,
@@ -1674,10 +1675,7 @@ async def _stream_agent_run(
         try:
             view = ModelInputView(
                 system=system_prompt,
-                messages=[
-                    {"role": m.role.value, "content": m.text()}
-                    for m in history
-                ],
+                messages=build_model_input_messages(history),
                 model=getattr(model.info, "model", None) if model else None,
                 tools=[
                     {"name": s.name, "description": s.description}

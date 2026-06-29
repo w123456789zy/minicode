@@ -150,6 +150,30 @@ def render_thinking(block: ThinkingBlock, max_len: int = 1200) -> str:
 # ─────────────────────────────────────────────────────────────
 
 
+def build_model_input_messages(history: List[Any]) -> List[Dict[str, Any]]:
+    """将 Message 列表转为 render_model_input 可用的 dict 列表。
+
+    包含 tool_calls（assistant 消息）和 tool_call_id（tool 消息），
+    让历史对话展示完整的工具调用信息。
+    """
+    result: List[Dict[str, Any]] = []
+    for m in history:
+        msg: Dict[str, Any] = {"role": m.role.value, "content": m.text()}
+        # assistant 消息：带上 tool_calls
+        tcs = m.tool_calls()
+        if tcs:
+            msg["tool_calls"] = [
+                {"id": tc.id, "name": tc.name, "arguments": tc.arguments}
+                for tc in tcs
+            ]
+        # tool 消息：带上 tool_call_id
+        trs = m.tool_results()
+        if trs:
+            msg["tool_call_id"] = trs[0].tool_call_id
+        result.append(msg)
+    return result
+
+
 def render_model_input(view: ModelInputView, max_msg_len: int = 200) -> str:
     """展示一次调 LLM 前准备的内容：system + messages + tools。
 
