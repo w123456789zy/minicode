@@ -252,10 +252,11 @@ model: gpt-4o
 # 上下文窗口大小（可选）。支持 128K / 1M / 128000 等写法
 context_window: 128K
 
-# 透传给 provider 的额外参数（可选）
+# 透传给 provider 的额外参数（可选）。
+# 整数字段（如 max_tokens）也支持 K/M 后缀，会自动展开成整数。
 extra:
   temperature: 0.7
-  max_tokens: 8K
+  max_tokens: 8000
 """
 
 
@@ -1751,6 +1752,26 @@ async def _stream_agent_run(
         except Exception:
             pass
 
+    def _flush_thinking() -> None:
+        """把本轮累积的 thinking 一次性打出（合并显示）。
+
+        一轮内可能出现多次 thinking（reasoning_content），必须合并成 1 个 block
+        输出 —— 不能按 token 拆成多个 think 模块。
+        """
+        nonlocal pending_thinking
+        if not pending_thinking:
+            return
+        duration_ms = None
+        if thinking_start is not None:
+            duration_ms = int((time.monotonic() - thinking_start) * 1000)
+        block = ThinkingBlock(
+            content="".join(pending_thinking),
+            duration_ms=duration_ms,
+        )
+        sys.stdout.write("\n" + render_thinking(block) + "\n")
+        sys.stdout.flush()
+        pending_thinking = []
+
     async def on_event(ev: AgentEvent) -> None:
         nonlocal pending_thinking, pending_usage, current_iteration, thinking_start
         if ev.type == "iteration_start":
@@ -1765,33 +1786,22 @@ async def _stream_agent_run(
             pending_thinking = []
             pending_usage = None
         elif ev.type == "text_delta":
-            # text 开始前先 flush thinking（保证 thinking 在 text 上方）
-            if pending_thinking:
-                duration_ms = None
-                if thinking_start is not None:
-                    duration_ms = int((time.monotonic() - thinking_start) * 1000)
-                block = ThinkingBlock(
-                    content="".join(pending_thinking),
-                    duration_ms=duration_ms,
-                )
-                sys.stdout.write("\n" + render_thinking(block) + "\n")
-                pending_thinking = []
             sys.stdout.write(ev.text)
             sys.stdout.flush()
         elif ev.type == "thinking_delta":
+            # 兼容旧版 runtime（仍 emit thinking_delta 的情况），仅累积不 flush
             pending_thinking.append(ev.text)
-        elif ev.type == "tool_call":
-            # 收尾：先 flush 上一个 think
-            if pending_thinking:
+        elif ev.type == "thinking_done":
+            # 本轮所有 thinking 已由 runtime 合并为 1 个事件，直接渲染
+            if ev.text:
                 duration_ms = None
                 if thinking_start is not None:
                     duration_ms = int((time.monotonic() - thinking_start) * 1000)
-                block = ThinkingBlock(
-                    content="".join(pending_thinking),
-                    duration_ms=duration_ms,
-                )
+                block = ThinkingBlock(content=ev.text, duration_ms=duration_ms)
                 sys.stdout.write("\n" + render_thinking(block) + "\n")
-                pending_thinking = []
+                sys.stdout.flush()
+        elif ev.type == "tool_call":
+            _flush_thinking()
             sys.stdout.write("\n" + render_tool_call(ToolCallView(
                 name=ev.tool_name,
                 args=ev.tool_args,
@@ -1830,16 +1840,7 @@ async def _stream_agent_run(
             pending_usage = ev.usage
         elif ev.type == "finish":
             # 本轮结束前 flush 思考
-            if pending_thinking:
-                duration_ms = None
-                if thinking_start is not None:
-                    duration_ms = int((time.monotonic() - thinking_start) * 1000)
-                block = ThinkingBlock(
-                    content="".join(pending_thinking),
-                    duration_ms=duration_ms,
-                )
-                sys.stdout.write("\n" + render_thinking(block) + "\n")
-                pending_thinking = []
+            _flush_thinking()
             # 展示本轮 token 用量
             if pending_usage is not None:
                 usage = pending_usage

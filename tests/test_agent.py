@@ -351,11 +351,10 @@ class TestRunAgentEvents:
         reg = MiniRegistry(_EchoTool())
         await run_agent(model, "sys", history, reg, ToolContext(), [], on_event=cb)
 
-        # 应该有 thinking_delta
-        types = [e.type for e in events]
-        assert "thinking_delta" in types
-        td = [e for e in events if e.type == "thinking_delta"]
-        assert "".join(e.text for e in td) == "让我想想"
+        # runtime 不再 emit 离散的 thinking_delta，改为合并为 thinking_done
+        done_events = [e for e in events if e.type == "thinking_done"]
+        assert len(done_events) == 1
+        assert done_events[0].text == "让我想想"
 
     async def test_event_error_propagates(self):
         events: List[AgentEvent] = []

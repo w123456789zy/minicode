@@ -314,10 +314,11 @@ model: gpt-4o
 # 上下文窗口大小（可选）。支持 128K / 1M / 128000 等写法
 context_window: 128K
 
-# 透传给 provider 的额外参数（可选）
+# 透传给 provider 的额外参数（可选）。
+# 整数字段（如 max_tokens）也支持 K/M 后缀，会自动展开成整数。
 extra:
   temperature: 0.7
-  max_tokens: 8K
+  max_tokens: 8000
 ```
 
 `provider` 可选值：

@@ -10,7 +10,7 @@
     context_window: 128K                # 可选，模型上下文窗口，支持 128K / 1M / 128000
     extra:                              # 可选，透传给 provider
       temperature: 0.7
-      max_tokens: 8K                    # 透传字段也支持 K/M
+      max_tokens: 8000                  # 整数字段也支持 K/M 后缀（"8K" → 8000）
 
 设计要点：
 - 启动时必须能加载出**完整有效**的配置，缺一字段直接报错退出
@@ -105,6 +105,35 @@ def _parse_size(value: Any) -> Optional[int]:
     elif suffix == "M":
         num *= 1_000_000
     return int(num)
+
+
+# ─────────────────────────────────────────────────────────────
+# extra 字段归一化
+# ─────────────────────────────────────────────────────────────
+
+# 已知需要整型 + 支持 K/M 后缀的 extra 字段
+# 这些字段最终会透传给 LLM API，必须是 int
+_INT_EXTRA_FIELDS = frozenset({"max_tokens", "max_output_tokens", "n"})
+
+
+def _normalize_extra_int_fields(extra: Dict[str, Any]) -> Dict[str, Any]:
+    """对 extra 里已知整数字段做类型归一化。
+
+    LLM API（OpenAI / Anthropic）对 max_tokens 等字段要求 int，不接受字符串。
+    但用户在 yaml 里写 "8K" / "1M" 比 8000 / 1000000 直观，所以遇到已知整数字段
+    且是字符串时，自动用 _parse_size 展开。
+
+    解析失败 → 保留原值（不静默篡改），调用方在用的时候会报错，自然把锅甩给用户。
+    """
+    out: Dict[str, Any] = {}
+    for k, v in extra.items():
+        if k in _INT_EXTRA_FIELDS and isinstance(v, str):
+            parsed = _parse_size(v)
+            if parsed is not None:
+                out[k] = parsed
+                continue
+        out[k] = v
+    return out
 
 
 # ─────────────────────────────────────────────────────────────
@@ -303,6 +332,11 @@ def load_config(path: Path) -> Tuple[Optional[LLMConfig], List[ConfigError]]:
 
     if errors:
         return None, errors
+
+    # 归一化 extra：
+    # - 已知整数字段（max_tokens）若用户写字符串（"8K" / "1M"），自动展开成 int
+    # - 这样模板里可以写 max_tokens: 8K 也合法
+    extra = _normalize_extra_int_fields(extra)
 
     return LLMConfig(
         provider=str(provider),

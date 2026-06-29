@@ -284,7 +284,8 @@ class AgentEvent:
     # 类型：
     #   "iteration_start"  进入新一轮 LLM 调用
     #   "text_delta"       文本 token
-    #   "thinking_delta"   思考 token（reasoning content）
+    #   "thinking_delta"   思考 token（reasoning content，已废弃，改用 thinking_done）
+    #   "thinking_done"    本轮所有 thinking 合并为 1 个事件（CLI 直接渲染）
     #   "tool_call"        攒齐了一次 tool_call（id + name + args）
     #   "tool_result"      一次 tool 执行完（name + content + is_error + result）
     #   "usage"            token 用量
@@ -462,7 +463,8 @@ async def run_agent(
                     await _emit(on_event, AgentEvent(type="text_delta", text=ev.text))
                 elif ev.type == "thinking_delta":
                     thinking_parts.append(ev.text)
-                    await _emit(on_event, AgentEvent(type="thinking_delta", text=ev.text))
+                    # 不 emit 离散的 thinking_delta；stream 结束后统一 emit thinking_done
+                    # 这样 CLI 侧就不可能把 thinking 拆成多个 block
                 elif ev.type == "tool_call_delta":
                     if not ev.tool_call_id:
                         if tool_calls:
@@ -519,6 +521,10 @@ async def run_agent(
         history.append(assistant_msg)
         if budget is not None:
             budget = budget.with_added_tokens(estimate_message_tokens(assistant_msg))
+
+        # 本轮所有 thinking 合并为 1 个事件（保证 CLI 只渲染 1 个 block）
+        if thinking_parts:
+            await _emit(on_event, AgentEvent(type="thinking_done", text="".join(thinking_parts)))
 
         await _emit(on_event, AgentEvent(type="finish", finish_reason=finish, usage=usage))
 

@@ -335,3 +335,94 @@ def test_context_window_omitted_defaults_to_zero(tmp_path: Path):
     cfg, _ = load_config(p)
     assert cfg is not None
     assert cfg.context_window == 0
+
+
+# ─────────────────────────────────────────────────────────────
+# extra 整数字段归一化（max_tokens 等）
+# ─────────────────────────────────────────────────────────────
+
+
+def test_extra_max_tokens_K_suffix(tmp_path: Path):
+    """extra.max_tokens: 8K → 自动归一化成 int 8000。"""
+    p = _write_config(
+        tmp_path,
+        "provider: openai\n"
+        "api_key: test\n"
+        "base_url: https://example.com\n"
+        "model: gpt-4o\n"
+        "extra:\n"
+        "  max_tokens: 8K\n",
+    )
+    cfg, errs = load_config(p)
+    assert errs == []
+    assert cfg is not None
+    assert cfg.extra["max_tokens"] == 8000
+    assert isinstance(cfg.extra["max_tokens"], int)
+
+
+def test_extra_max_tokens_pure_int(tmp_path: Path):
+    """extra.max_tokens: 4096 → 保持 int。"""
+    p = _write_config(
+        tmp_path,
+        "provider: openai\n"
+        "api_key: test\n"
+        "base_url: https://example.com\n"
+        "model: gpt-4o\n"
+        "extra:\n"
+        "  max_tokens: 4096\n",
+    )
+    cfg, errs = load_config(p)
+    assert errs == []
+    assert cfg.extra["max_tokens"] == 4096
+    assert isinstance(cfg.extra["max_tokens"], int)
+
+
+def test_extra_max_tokens_M_suffix(tmp_path: Path):
+    """extra.max_tokens: 1M → 1000000。"""
+    p = _write_config(
+        tmp_path,
+        "provider: openai\n"
+        "api_key: test\n"
+        "base_url: https://example.com\n"
+        "model: gpt-4o\n"
+        "extra:\n"
+        "  max_tokens: 1M\n",
+    )
+    cfg, errs = load_config(p)
+    assert errs == []
+    assert cfg.extra["max_tokens"] == 1_000_000
+
+
+def test_extra_other_string_fields_not_touched(tmp_path: Path):
+    """非整数字段的字符串值不会被强制转成 int。"""
+    p = _write_config(
+        tmp_path,
+        "provider: openai\n"
+        "api_key: test\n"
+        "base_url: https://example.com\n"
+        "model: gpt-4o\n"
+        "extra:\n"
+        "  temperature: 0.7\n"
+        "  user: my-name\n",
+    )
+    cfg, errs = load_config(p)
+    assert errs == []
+    assert cfg.extra["temperature"] == 0.7
+    assert cfg.extra["user"] == "my-name"
+
+
+def test_extra_max_tokens_invalid_string_preserved(tmp_path: Path):
+    """无效字符串（解析不了）保留原值，让上游 LLM API 报错。"""
+    p = _write_config(
+        tmp_path,
+        "provider: openai\n"
+        "api_key: test\n"
+        "base_url: https://example.com\n"
+        "model: gpt-4o\n"
+        "extra:\n"
+        "  max_tokens: abc\n",
+    )
+    cfg, errs = load_config(p)
+    # 不报错（让用户自己看到 LLM API 的错误信息）
+    assert errs == []
+    assert cfg.extra["max_tokens"] == "abc"
